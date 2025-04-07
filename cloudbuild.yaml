@@ -1,0 +1,59 @@
+steps:
+  # === PASO 1: Ejecutar Pruebas con Pytest ===
+  # Si este paso falla, el pipeline se detiene.
+  - name: 'python:3.9-slim' # Usamos una imagen de Python
+    entrypoint: 'bash'      # Para ejecutar comandos shell
+    args:
+    - '-c'
+    - |
+      echo "--- Instalando dependencias para pruebas ---" && \
+      pip install -r requirements.txt && \
+      echo "--- Ejecutando pruebas (pytest) ---" && \
+      python -m pytest tests/
+      # Instala dependencias y corre pytest en el directorio ./tests/
+
+  # === PASO 2: Construir la imagen Docker ===
+  # Solo se ejecuta si las pruebas (paso anterior) fueron exitosas.
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+    - 'build'
+    - '-t'
+    # Ruta donde se guardará la imagen en Artifact Registry
+    - 'us-central1-docker.pkg.dev/gcp-devops-454205/devops-images/gcp-repo-01:$COMMIT_SHA'
+    - '.' # Directorio de contexto para el build (Dockerfile debe estar aquí)
+
+  # === PASO 3: Subir (push) la imagen a Artifact Registry ===
+  # Solo se ejecuta si el build (paso anterior) fue exitoso.
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+     - 'push'
+     - 'us-central1-docker.pkg.dev/gcp-devops-454205/devops-images/gcp-repo-01:$COMMIT_SHA'
+     # Sube explícitamente la imagen que acabamos de construir
+
+  # === PASO 4: Desplegar a Cloud Run ===
+  # Solo se ejecuta si el push (paso anterior) fue exitoso.
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk' # Usa la imagen de gcloud
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'hola-mundo-service' # El nombre que le darás a tu servicio Cloud Run
+      - '--image' # La imagen exacta que acabamos de subir a Artifact Registry
+      - 'us-central1-docker.pkg.dev/gcp-devops-454205/devops-images/gcp-repo-01:$COMMIT_SHA'
+      - '--region'
+      - 'us-central1' # La región donde quieres desplegar el servicio Cloud Run
+      - '--platform'
+      - 'managed' # Plataforma serverless gestionada por Google
+      - '--allow-unauthenticated' # Permite acceso público (¡cuidado en producción!)
+
+# === IMÁGENES A SUBIR (POST-BUILD) ===
+# Cloud Build subirá automáticamente estas imágenes si todos los pasos anteriores son exitosos.
+# Nota: El PASO 3 ya hace un push explícito, por lo que esta sección es algo redundante
+# para esta imagen específica, pero es la forma estándar de indicarlo.
+images:
+  - 'us-central1-docker.pkg.dev/gcp-devops-454205/devops-images/gcp-repo-01:$COMMIT_SHA'
+
+# === OPCIONES DE BUILD ===
+# Opciones globales para la ejecución del build.
+options:
+  logging: CLOUD_LOGGING_ONLY # Opciones: CLOUD_LOGGING_ONLY, LEGACY, GCS_ONLY, NONE

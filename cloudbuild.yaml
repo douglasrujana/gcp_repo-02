@@ -1,59 +1,80 @@
+# cloudbuild.yaml (Despliegue en App Engine Flexible)
 steps:
-  # === PASO 1: Ejecutar Pruebas con Pytest ===
-  # Si este paso falla, el pipeline se detiene.
-  - name: 'python:3.9-slim' # Usamos una imagen de Python
-    entrypoint: 'bash'      # Para ejecutar comandos shell
+  # ========================================
+  # ✅ PASO 1: Ejecutar Pruebas con Pytest
+  # ========================================
+  # (Sin cambios, ¡las pruebas son fundamentales!)
+  - name: 'python:3.9-slim'
+    entrypoint: 'bash'
+    id: 'Ejecutar Pruebas' # ID para referencia (opcional)
     args:
     - '-c'
     - |
-      echo "--- Instalando dependencias para pruebas ---" && \
+      echo "--- 🧪 Instalando dependencias para pruebas ---" && \
       pip install -r requirements.txt && \
-      echo "--- Ejecutando pruebas (pytest) ---" && \
+      echo "--- ▶️ Ejecutando pruebas (pytest) ---" && \
       python -m pytest tests/
-      # Instala dependencias y corre pytest en el directorio ./tests/
 
-  # === PASO 2: Construir la imagen Docker ===
-  # Solo se ejecuta si las pruebas (paso anterior) fueron exitosas.
+  # ==========================================
+  # 🐳 PASO 2: Construir la imagen Docker
+  # ==========================================
+  # (Necesario para App Engine Flex con runtime 'custom')
   - name: 'gcr.io/cloud-builders/docker'
+    id: 'Construir Imagen'
     args:
     - 'build'
     - '-t'
-    # Ruta donde se guardará la imagen en Artifact Registry
-    - 'us-central1-docker.pkg.dev/gcp-devops-454205/devops-images/gcp-repo-01:$COMMIT_SHA'
-    - '.' # Directorio de contexto para el build (Dockerfile debe estar aquí)
+    # 📍 Ruta en Artifact Registry (¡usando $PROJECT_ID!)
+    - 'us-central1-docker.pkg.dev/${PROJECT_ID}/devops-images/gcp-repo-01:$COMMIT_SHA'
+    - '.' # Directorio de contexto (donde está tu Dockerfile)
+    waitFor: ['Ejecutar Pruebas'] # Asegura que las pruebas pasen primero
 
-  # === PASO 3: Subir (push) la imagen a Artifact Registry ===
-  # Solo se ejecuta si el build (paso anterior) fue exitoso.
+  # ====================================================
+  # ⬆️ PASO 3: Subir (push) la imagen a Artifact Registry
+  # ====================================================
+  # (La imagen debe estar accesible para App Engine)
   - name: 'gcr.io/cloud-builders/docker'
+    id: 'Subir Imagen'
     args:
      - 'push'
-     - 'us-central1-docker.pkg.dev/gcp-devops-454205/devops-images/gcp-repo-01:$COMMIT_SHA'
-     # Sube explícitamente la imagen que acabamos de construir
+     # 📍 La misma ruta de la imagen que construimos
+     - 'us-central1-docker.pkg.dev/${PROJECT_ID}/devops-images/gcp-repo-01:$COMMIT_SHA'
+    waitFor: ['Construir Imagen'] # Asegura que la imagen se construyó
 
-  # === PASO 4: Desplegar a Cloud Run ===
-  # Solo se ejecuta si el push (paso anterior) fue exitoso.
-  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk' # Usa la imagen de gcloud
+  # ====================================================
+  # 🔥 PASO 4: Desplegar a App Engine Flexible Environment 🔥
+  # ====================================================
+  # ¡Aquí está el cambio principal!
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    id: 'Desplegar a App Engine'
     entrypoint: gcloud
     args:
-      - 'run'
-      - 'deploy'
-      - 'hola-mundo-service' # El nombre que le darás a tu servicio Cloud Run
-      - '--image' # La imagen exacta que acabamos de subir a Artifact Registry
-      - 'us-central1-docker.pkg.dev/gcp-devops-454205/devops-images/gcp-repo-01:$COMMIT_SHA'
-      - '--region'
-      - 'us-central1' # La región donde quieres desplegar el servicio Cloud Run
-      - '--platform'
-      - 'managed' # Plataforma serverless gestionada por Google
-      - '--allow-unauthenticated' # Permite acceso público (¡cuidado en producción!)
+      - 'app'         # Comando principal de App Engine
+      - 'deploy'      # Acción de despliegue
+      # 📄 'app.yaml' # Opcional: gcloud lo busca por defecto.
+                      # Especificar si tiene otro nombre o ruta.
+      - '--image-url' # 🖼️ Usamos la imagen que SUBIMOS
+      - 'us-central1-docker.pkg.dev/${PROJECT_ID}/devops-images/gcp-repo-01:$COMMIT_SHA'
+      - '--project'   # 🆔 Especifica el proyecto (buena práctica)
+      - '${PROJECT_ID}'
+      - '--version'   # 🏷️ Etiqueta la versión con el commit (opcional pero útil)
+      - '${COMMIT_SHA}'
+      - '--quiet'     # 🤫 Evita prompts interactivos (¡esencial en CI/CD!)
+      # '--stop-previous-version' # Opcional: Detiene la versión anterior tras el deploy exitoso
+      # '--promote' # Opcional: (por defecto es true) Dirige todo el tráfico a la nueva versión
+    waitFor: ['Subir Imagen'] # Asegura que la imagen esté en el registro
 
-# === IMÁGENES A SUBIR (POST-BUILD) ===
-# Cloud Build subirá automáticamente estas imágenes si todos los pasos anteriores son exitosos.
-# Nota: El PASO 3 ya hace un push explícito, por lo que esta sección es algo redundante
-# para esta imagen específica, pero es la forma estándar de indicarlo.
+# ======================================
+# 🖼️ IMÁGENES A SUBIR (POST-BUILD)
+# ======================================
+# (Redundante por el PASO 3 explícito, pero es la forma estándar)
 images:
-  - 'us-central1-docker.pkg.dev/gcp-devops-454205/devops-images/gcp-repo-01:$COMMIT_SHA'
+  - 'us-central1-docker.pkg.dev/${PROJECT_ID}/devops-images/gcp-repo-01:$COMMIT_SHA'
 
-# === OPCIONES DE BUILD ===
-# Opciones globales para la ejecución del build.
-options:
-  logging: CLOUD_LOGGING_ONLY # Opciones: CLOUD_LOGGING_ONLY, LEGACY, GCS_ONLY, NONE
+# ======================================
+# ⚙️ SUSTITUCIONES (Opcional)
+# ======================================
+# $PROJECT_ID y $COMMIT_SHA son automáticas. Puedes añadir las tuyas:
+# substitutions:
+#   _MY_REGION: 'us-central1'
+#   _MY_SERVICE_NAME: 'mi-servicio-appengine'
